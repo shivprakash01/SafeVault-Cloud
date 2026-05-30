@@ -1,0 +1,91 @@
+version: '3.9'
+
+services:
+
+  mongo:
+    image: mongo:7
+    container_name: safevault-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - safevault-net
+    healthcheck:
+      test: ["CMD","mongosh","--eval","db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: safevault-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - safevault-net
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  auth-service:
+    build: ./auth-service
+    container_name: safevault-auth
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/safevault
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=safevault_secret_change_in_prod
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - safevault-net
+
+  upload-service:
+    build: ./upload-service
+    container_name: safevault-upload
+    ports:
+      - "5000:5000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/safevault
+      - AUTH_SERVICE_URL=http://auth-service:8000
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - upload-data:/app/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      - safevault-net
+
+  frontend:
+    build: ./frontend
+    container_name: safevault-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_AUTH_URL=http://localhost:8000
+      - REACT_APP_UPLOAD_URL=http://localhost:5000
+    depends_on:
+      - auth-service
+      - upload-service
+    networks:
+      - safevault-net
+
+volumes:
+  mongo-data:
+  upload-data:
+
+networks:
+  safevault-net:
+    driver: bridge
